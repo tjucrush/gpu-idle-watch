@@ -1,0 +1,10 @@
+{
+  "servers": [
+    {
+      "name": "实验室 GPU",
+      "ssh": "gpu-lab",
+      "mount": "/data",
+      "auth": "key"
+    }
+  ]
+}

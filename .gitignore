@@ -1,0 +1,31 @@
+# Machine-specific server settings and credentials
+servers*.json
+!servers.example.json
+.ssh/
+credentials/
+*.dpapi
+*.pem
+*.key
+*.ppk
+id_rsa*
+id_ed25519*
+.env
+.env.*
+known_hosts*
+
+# Collected data, logs and local build products
+.runtime/
+*.log
+*.db
+*.exe
+*.dll
+*.pdb
+*.zip
+!downloads/gpu-idle-watch-windows.zip
+__pycache__/
+*.py[cod]
+dist/
+build/
+bin/
+obj/
+.vs/

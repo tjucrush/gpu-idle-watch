@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>GPU 实时看板</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" type="module"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#overview" aria-label="GPU 实时看板首页">
+        <span class="brand-mark" aria-hidden="true"><i></i></span>
+        <span>GPU 实时看板</span>
+      </a>
+      <nav class="navigation" aria-label="页面">
+        <a href="#overview" data-view="overview" aria-current="page">集群总览</a>
+        <a href="#processes" data-view="processes">计算进程</a>
+      </nav>
+      <div class="top-actions">
+        <span id="connection" class="connection connecting" aria-live="polite"><span></span>连接中</span>
+        <button id="pause" class="quiet-button pause" type="button" aria-pressed="false"><i aria-hidden="true"></i><span>暂停</span></button>
+      </div>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section id="overview" aria-labelledby="overview-title">
+      <div class="page-heading">
+        <h1 id="overview-title">集群总览</h1>
+        <div id="update-time" class="update-time">等待服务器数据</div>
+      </div>
+      <div id="summary" class="summary" aria-label="集群指标">
+        <article class="metric"><div>在线服务器</div><strong>—</strong></article>
+        <article class="metric"><div>平均 GPU 利用率</div><strong>—</strong></article>
+        <article class="metric"><div>显存占用</div><strong>—</strong></article>
+        <article class="metric"><div>计算进程</div><strong>—</strong></article>
+      </div>
+
+      <div class="telemetry">
+        <section class="panel trend" aria-labelledby="trend-title">
+          <div class="panel-heading">
+            <div><h2 id="trend-title">GPU 利用率趋势</h2><div class="subtle">各服务器平均值</div></div>
+            <span class="tag" id="trend-range">最近 5 分钟</span>
+          </div>
+          <div class="plot">
+            <canvas id="trend" role="img" aria-label="各服务器最近五分钟的平均 GPU 利用率"></canvas>
+            <div id="plot-placeholder" class="plot-placeholder">正在收集实时利用率</div>
+            <div id="plot-tooltip" class="plot-tooltip" hidden></div>
+          </div>
+          <div id="legend" class="legend" aria-label="趋势图图例"></div>
+        </section>
+
+        <section class="panel server-panel" aria-labelledby="server-title">
+          <div class="panel-heading"><h2 id="server-title">服务器状态</h2><span id="online-count" class="subtle">正在连接</span></div>
+          <div id="servers" class="server-list"></div>
+        </section>
+      </div>
+
+      <section class="gpu-section" id="gpu-section" aria-labelledby="gpu-title">
+        <div class="section-heading">
+          <h2 id="gpu-title">显卡明细</h2>
+          <div id="gpu-filter" class="segmented" aria-label="筛选显卡服务器">
+            <button type="button" data-host="all" aria-pressed="true">全部</button>
+          </div>
+        </div>
+        <div id="gpu-groups"></div>
+      </section>
+    </section>
+
+    <section id="processes" aria-labelledby="process-title" hidden>
+      <div class="page-heading">
+        <h1 id="process-title">计算进程</h1>
+        <div id="process-count" class="update-time">等待服务器数据</div>
+      </div>
+      <div class="panel process-panel">
+        <div class="process-controls">
+          <div id="process-filter" class="segmented" aria-label="筛选进程服务器">
+            <button type="button" data-host="all" aria-pressed="true">全部</button>
+          </div>
+          <button id="gpu-chip" type="button" class="quiet-button gpu-chip" hidden></button>
+          <label class="search"><span aria-hidden="true"></span><input id="process-query" type="search" placeholder="搜索项目、PID 或用户" aria-label="搜索项目、PID 或用户" autocomplete="off"></label>
+        </div>
+        <div id="process-issues" class="process-issues" hidden></div>
+        <div class="table-scroll" tabindex="0" role="region" aria-label="GPU 计算进程列表">
+          <table>
+            <thead><tr>
+              <th scope="col">项目</th><th scope="col">服务器 / 显卡</th><th scope="col">PID</th><th scope="col">用户</th>
+              <th scope="col">程序</th><th scope="col" aria-sort="descending">占用显存 <span aria-hidden="true">↓</span></th><th scope="col">运行时长</th>
+            </tr></thead>
+            <tbody id="process-rows"><tr><td colspan="7" class="empty">等待服务器数据</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <p class="process-note">项目名根据进程目录或启动路径推断。进程跨多张卡时，每张卡单独列出。</p>
+    </section>
+  </main>
+</body>
+</html>
