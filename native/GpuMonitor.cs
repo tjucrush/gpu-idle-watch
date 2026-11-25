@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -89,6 +90,14 @@ namespace GpuWatch
         private const string PacketPrefix = "GPU_SAMPLE ";
         private readonly ServerDefinition host;
         private readonly string command;
+        internal static string SshExecutable
+        {
+            get
+            {
+                var system = Environment.Is64BitOperatingSystem && !Environment.Is64BitProcess ? "Sysnative" : "System32";
+                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), system, "OpenSSH", "ssh.exe");
+            }
+        }
 
         private static string QuoteRemote(string value)
         {
@@ -115,14 +124,13 @@ namespace GpuWatch
             while (!token.IsCancellationRequested)
             {
                 emit(ConnectionState.Connecting, null);
-                using (var ssh = new Process { StartInfo = BuildStartInfo() })
+                using (var ssh = new Process())
                 {
                     var started = false;
                     Task<string> errors = null;
                     try
                     {
-                        if (host.auth == "password" && !File.Exists(ssh.StartInfo.EnvironmentVariables["SSH_ASKPASS"]))
-                            throw new FileNotFoundException("缺少 GpuWatch.AskPass.exe");
+                        ssh.StartInfo = BuildStartInfo(host, command);
                         started = ssh.Start();
                         if (!started) throw new IOException("无法启动 SSH 客户端");
                         errors = ssh.StandardError.ReadToEndAsync();
@@ -165,7 +173,15 @@ namespace GpuWatch
                     {
                         if (!token.IsCancellationRequested)
                         {
+                            // OpenSSH can close stdout just before its final error reaches stderr.
+                            if (errors != null && !errors.IsCompleted && error is IOException)
+                                Task.WaitAny(new Task[] { errors }, 500);
                             var diagnostic = errors != null && errors.Status == TaskStatus.RanToCompletion ? errors.Result : "";
+                            if (host.auth == "password" && IsAuthFailure(diagnostic))
+                            {
+                                emit(ConnectionState.Offline, "SSH 密码认证失败，修正凭据后可暂停再继续");
+                                return;
+                            }
                             emit(ConnectionState.Offline, Explain(error, diagnostic));
                         }
                     }
@@ -178,7 +194,39 @@ namespace GpuWatch
             }
         }
 
-        private ProcessStartInfo BuildStartInfo()
+        public static Task VerifyLoginAsync(ServerDefinition candidate)
+        {
+            return Task.Run(() =>
+            {
+                using (var ssh = new Process { StartInfo = BuildStartInfo(candidate, "true") })
+                {
+                    try
+                    {
+                        if (!ssh.Start()) throw new IOException("无法启动 SSH 客户端");
+                    }
+                    catch (System.ComponentModel.Win32Exception)
+                    {
+                        throw new IOException("请安装 Windows OpenSSH 客户端后重试。");
+                    }
+                    try
+                    {
+                        ssh.StandardInput.Close();
+                        var output = ssh.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
+                        var error = ssh.StandardError.ReadToEndAsync();
+                        if (!ssh.WaitForExit(15000) || !Task.WaitAll(new Task[] { output, error }, 1000))
+                            throw new IOException("SSH 登录验证超时，请检查地址、端口和网络后重试。");
+                        if (ssh.ExitCode == 0) return;
+                        if (IsAuthFailure(error.Result))
+                            throw new IOException("SSH 登录失败，请核对账号和密码，并确认服务器允许密码登录。");
+                        var reason = Explain(new EndOfStreamException(), error.Result);
+                        throw new IOException("SSH 登录验证失败：" + (reason == "采样连接中断" ? "请检查服务器 SSH 设置和网络。" : reason));
+                    }
+                    finally { Stop(ssh); }
+                }
+            });
+        }
+
+        private static ProcessStartInfo BuildStartInfo(ServerDefinition host, string command)
         {
             var args = new List<string>
             {
@@ -186,13 +234,22 @@ namespace GpuWatch
                 "-o", "ConnectionAttempts=1", "-o", "ClearAllForwardings=yes", "-o", "ServerAliveInterval=8",
                 "-o", "ServerAliveCountMax=2", "-o", "LogLevel=ERROR"
             };
+            var direct = !String.IsNullOrEmpty(host.host);
+            if (direct)
+            {
+                args.AddRange(new[] { "-F", "none", "-o", HostTrust.KnownHostsOption(host.host, host.port),
+                    "-o", "GlobalKnownHostsFile=none", "-o", "UpdateHostKeys=no",
+                    "-p", host.port.ToString(System.Globalization.CultureInfo.InvariantCulture), "-l", host.user });
+            }
             if (host.auth == "password")
                 args.AddRange(new[] { "-o", "BatchMode=no", "-o", "PreferredAuthentications=password",
+                    "-o", "PubkeyAuthentication=no", "-o", "KbdInteractiveAuthentication=no",
                     "-o", "PasswordAuthentication=yes", "-o", "NumberOfPasswordPrompts=1" });
             else args.AddRange(new[] { "-o", "BatchMode=yes" });
-            args.Add(host.ssh);
+            args.Add("--");
+            args.Add(direct ? host.host : host.ssh);
             args.Add(command);
-            var start = new ProcessStartInfo("ssh.exe", string.Join(" ", args.Select(QuoteArgument)))
+            var start = new ProcessStartInfo(SshExecutable, string.Join(" ", args.Select(QuoteArgument)))
             {
                 UseShellExecute = false, CreateNoWindow = true,
                 RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
@@ -200,12 +257,34 @@ namespace GpuWatch
             };
             if (host.auth == "password")
             {
-                start.EnvironmentVariables["SSH_ASKPASS"] = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "GpuWatch.AskPass.exe");
+                var exe = typeof(SshMonitor).Assembly.Location;
+                start.WorkingDirectory = Path.GetDirectoryName(exe);
+                start.EnvironmentVariables["SSH_ASKPASS"] = @".\" + AskPassFileName(exe);
                 start.EnvironmentVariables["SSH_ASKPASS_REQUIRE"] = "force";
                 start.EnvironmentVariables["DISPLAY"] = "gpu-watch:0";
                 start.EnvironmentVariables["GPUWATCH_SSH_ALIAS"] = host.ssh;
+                start.EnvironmentVariables["GPUWATCH_MODE"] = "askpass";
             }
             return start;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        private static extern uint GetShortPathName(string longPath, StringBuilder shortPath, uint length);
+
+        private static string AskPassFileName(string path)
+        {
+            // Win32 OpenSSH reads SSH_ASKPASS through a narrow-character API.
+            // A relative ASCII filename also works when the download directory contains Unicode.
+            var name = Path.GetFileName(path);
+            if (name.All(c => c <= 127)) return name;
+            var shortPath = new StringBuilder(32768);
+            var used = GetShortPathName(path, shortPath, (uint)shortPath.Capacity);
+            if (used > 0 && used < shortPath.Capacity)
+            {
+                name = Path.GetFileName(shortPath.ToString());
+                if (name.All(c => c <= 127)) return name;
+            }
+            throw new InvalidDataException("请将程序文件名改为 GPU-Idle-Watch.exe 后重新打开，所在文件夹可以使用中文。");
         }
 
         private static async Task<string> ReadPacket(StreamReader stream, int timeout, CancellationToken token)
@@ -232,7 +311,7 @@ namespace GpuWatch
             }
         }
 
-        private static string QuoteArgument(string argument)
+        internal static string QuoteArgument(string argument)
         {
             var result = new StringBuilder("\"");
             var slashes = 0;
@@ -259,12 +338,18 @@ namespace GpuWatch
             if (error is TimeoutException) return "读取显卡超时";
             var message = diagnostic.ToLowerInvariant();
             if (message.Contains("host key") || message.Contains("identification has changed")) return "SSH 主机密钥校验失败";
-            if (error is FileNotFoundException) return error.Message;
-            if (message.Contains("permission denied")) return "SSH 认证失败，请检查连接配置和凭据";
+            if (error is InvalidDataException) return error.Message;
+            if (IsAuthFailure(message)) return "SSH 认证失败，请检查连接配置和凭据";
             if (message.Contains("python3") && message.Contains("not found")) return "服务器缺少 Python 3";
             if (message.Contains("timed out") || message.Contains("unreachable") || message.Contains("refused")) return "无法访问 SSH 端口";
             if (error is IOException && (error.Message.Contains("nvidia-smi") || error.Message.Contains("NVIDIA"))) return error.Message;
             return "采样连接中断";
+        }
+
+        private static bool IsAuthFailure(string diagnostic)
+        {
+            return diagnostic.IndexOf("permission denied", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                diagnostic.IndexOf("too many authentication failures", StringComparison.OrdinalIgnoreCase) >= 0;
         }
     }
 }

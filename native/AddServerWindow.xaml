@@ -1,0 +1,136 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="添加服务器" Width="528" Height="550" MinWidth="360" MinHeight="320"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" ResizeMode="CanResize"
+        FontFamily="Microsoft YaHei UI" FontSize="14" Foreground="#ECF2FC" Background="#121927"
+        UseLayoutRounding="True" SnapsToDevicePixels="True">
+  <Window.Resources>
+    <Style x:Key="FieldLabel" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#C5D1E5"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="Margin" Value="0,0,0,6"/>
+    </Style>
+    <Style x:Key="Field" TargetType="Control">
+      <Setter Property="Height" Value="37"/>
+      <Setter Property="Background" Value="#0E1521"/>
+      <Setter Property="Foreground" Value="#F1F5FE"/>
+      <Setter Property="BorderBrush" Value="#344259"/>
+      <Setter Property="VerticalContentAlignment" Value="Center"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Control">
+            <Border x:Name="Box" CornerRadius="6" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" Padding="10,0">
+              <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center" Focusable="False"
+                            HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Box" Property="BorderBrush" Value="#536780"/></Trigger>
+              <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Box" Property="BorderBrush" Value="#84AFEF"/></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Box" Property="Opacity" Value="0.6"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="Hint" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#8292AB"/>
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="Margin" Value="12,0,0,0"/>
+      <Setter Property="IsHitTestVisible" Value="False"/>
+      <Setter Property="Visibility" Value="Collapsed"/>
+    </Style>
+    <Style x:Key="Action" TargetType="Button">
+      <Setter Property="MinWidth" Value="72"/><Setter Property="Height" Value="36"/>
+      <Setter Property="Padding" Value="15,0"/><Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Background" Value="#202C3E"/><Setter Property="Foreground" Value="#E2EAF7"/>
+      <Setter Property="BorderBrush" Value="#3A4B61"/><Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Frame" Background="{TemplateBinding Background}" CornerRadius="7" Padding="{TemplateBinding Padding}"
+                    BorderThickness="{TemplateBinding BorderThickness}" BorderBrush="{TemplateBinding BorderBrush}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Frame" Property="Opacity" Value=".86"/></Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Frame" Property="BorderBrush" Value="#F7FAFF"/></Trigger>
+              <Trigger Property="IsPressed" Value="True"><Setter TargetName="Frame" Property="Opacity" Value=".72"/></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Frame" Property="Opacity" Value=".62"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </Window.Resources>
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <Border BorderBrush="#293649" BorderThickness="0,0,0,1" Padding="22,17">
+      <Border.Background>
+        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#1C3336" Offset="0"/><GradientStop Color="#172134" Offset=".9"/></LinearGradientBrush>
+      </Border.Background>
+      <DockPanel>
+        <Border DockPanel.Dock="Left" Width="42" Height="42" CornerRadius="10" Background="#21443F" BorderBrush="#365D55" BorderThickness="1" Margin="0,0,13,0">
+          <Path Width="21" Height="21" Stretch="Uniform" Stroke="#91E9CB" StrokeThickness="1.7" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                Data="M3,3 H21 V10 H3 Z M3,14 H21 V21 H3 Z M6,6.5 H8 M6,17.5 H8"/>
+        </Border>
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock Text="添加服务器" Foreground="#F0F6FB" FontSize="21" FontWeight="SemiBold"/>
+          <TextBlock Text="通过 SSH 监控这台服务器的显卡和磁盘。" Foreground="#A9BDCB" FontSize="12" Margin="0,2,0,0"/>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel x:Name="Editor" Margin="22,15,22,13">
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="78"/></Grid.ColumnDefinitions>
+          <StackPanel Margin="0,0,12,0">
+            <TextBlock Text="服务器 IP 或主机名" Style="{StaticResource FieldLabel}"/>
+            <TextBox x:Name="Host" AutomationProperties.Name="服务器 IP 或主机名" Style="{StaticResource Field}" CaretBrush="White"/>
+          </StackPanel>
+          <StackPanel Grid.Column="1">
+            <TextBlock Text="SSH 端口" Style="{StaticResource FieldLabel}"/>
+            <TextBox x:Name="Port" AutomationProperties.Name="SSH 端口" Text="22" MaxLength="5" Style="{StaticResource Field}" CaretBrush="White"/>
+          </StackPanel>
+        </Grid>
+        <Grid Margin="0,13,0,0">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <StackPanel Margin="0,0,12,0">
+            <TextBlock Text="SSH 账号" Style="{StaticResource FieldLabel}"/>
+            <TextBox x:Name="User" AutomationProperties.Name="SSH 账号" Style="{StaticResource Field}" CaretBrush="White"/>
+          </StackPanel>
+          <StackPanel Grid.Column="1">
+            <TextBlock Text="SSH 密码" Style="{StaticResource FieldLabel}"/>
+            <PasswordBox x:Name="Password" AutomationProperties.Name="SSH 密码" Style="{StaticResource Field}" CaretBrush="White"/>
+          </StackPanel>
+        </Grid>
+        <TextBlock Text="磁盘挂载路径" Style="{StaticResource FieldLabel}" Margin="0,13,0,6"/>
+        <Grid>
+          <TextBox x:Name="Mount" AutomationProperties.Name="磁盘挂载路径" Style="{StaticResource Field}" CaretBrush="White"/>
+          <TextBlock Text="例如 /data">
+            <TextBlock.Style><Style TargetType="TextBlock" BasedOn="{StaticResource Hint}"><Style.Triggers>
+              <DataTrigger Binding="{Binding Text, ElementName=Mount}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger>
+            </Style.Triggers></Style></TextBlock.Style>
+          </TextBlock>
+        </Grid>
+        <TextBlock Text="显示名称（选填）" Style="{StaticResource FieldLabel}" Margin="0,13,0,6"/>
+        <TextBox x:Name="DisplayName" AutomationProperties.Name="显示名称（选填）" Style="{StaticResource Field}" CaretBrush="White"/>
+        <TextBlock Text="密码由 Windows 加密保存在此电脑上。" Foreground="#91A2BA" FontSize="12" TextWrapping="Wrap" Margin="0,12,0,0"/>
+      </StackPanel>
+    </ScrollViewer>
+    <Border x:Name="FeedbackBox" Grid.Row="2" Margin="22,0,22,10" Padding="10,6"
+            Visibility="Collapsed" CornerRadius="5" Background="#28313E">
+      <TextBlock x:Name="Feedback" FontSize="13" Foreground="#EFBC94" TextWrapping="Wrap"/>
+    </Border>
+    <Border Grid.Row="3" Background="#151E2C" BorderBrush="#2C384B" BorderThickness="0,1,0,0" Padding="22,12">
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <Button x:Name="Cancel" Content="取消" IsCancel="True" Style="{StaticResource Action}" Margin="0,0,8,0"/>
+        <Button x:Name="Save" Content="验证并添加" IsDefault="True" Style="{StaticResource Action}"
+                MinWidth="112" FontWeight="SemiBold" Background="#84DFC0" Foreground="#102B24" BorderBrush="#A0E8CF"/>
+      </StackPanel>
+    </Border>
+  </Grid>
+</Window>

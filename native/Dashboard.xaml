@@ -290,6 +290,7 @@
             <TextBlock x:Name="LiveText" Text="连接中" FontSize="13" Foreground="#F6BE78" />
           </StackPanel>
         </Border>
+        <Button x:Name="AddServer" Style="{StaticResource Button}" Content="＋ 添加服务器" Margin="0,0,7,0" Foreground="#94EDD1" BorderBrush="#356B5C" Background="#1B3832" ToolTip="填写 SSH 账号和要监控的磁盘挂载点" />
         <Button x:Name="IdleAlertsToggle" Style="{StaticResource Button}" Content="空闲提醒 · 开" Margin="0,0,7,0" ToolTip="开启或关闭右下角的空闲显卡提醒" />
         <Button x:Name="Pin" Style="{StaticResource Button}" Content="置顶" Margin="0,0,7,0" ToolTip="让窗口显示在其他窗口上方" />
         <Button x:Name="Pause" Style="{StaticResource Button}" Content="暂停" ToolTip="暂停刷新" />

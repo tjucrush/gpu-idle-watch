@@ -18,8 +18,8 @@ using System.Windows.Threading;
 [assembly: AssemblyTitle("GPU 空闲卡监控")]
 [assembly: AssemblyDescription("通过 SSH 查看 NVIDIA 显卡、计算进程和磁盘余量")]
 [assembly: AssemblyProduct("GPU 空闲卡监控")]
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
+[assembly: AssemblyVersion("1.2.0.0")]
+[assembly: AssemblyFileVersion("1.2.0.0")]
 
 namespace GpuWatch
 {
@@ -155,9 +155,11 @@ namespace GpuWatch
 
     internal sealed class Dashboard
     {
-        private readonly string[] hostIds;
+        private readonly List<string> hostIds;
         private readonly Dictionary<string, ServerDefinition> servers;
-        private static readonly string RuntimeDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ".runtime");
+        internal static readonly string ConfigDirectory = File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "servers.local.json"))
+            ? AppDomain.CurrentDomain.BaseDirectory : Path.Combine(Environment.GetEnvironmentVariable("LOCALAPPDATA"), "GpuWatch");
+        private static readonly string RuntimeDirectory = Path.Combine(ConfigDirectory, ".runtime");
         private static readonly string SettingsFile = Path.Combine(RuntimeDirectory, "desktop-preferences.txt");
         private readonly Window window;
         private readonly string collector;
@@ -186,8 +188,8 @@ namespace GpuWatch
             this.window = window;
             this.collector = collector;
             servers = hosts.ToDictionary(h => h.name);
-            hostIds = hosts.Select(h => h.name).ToArray();
-            Find<ItemsControl>("ServerTiles").Tag = Math.Min(3, hostIds.Length);
+            hostIds = hosts.Select(h => h.name).ToList();
+            UpdateTileColumns();
             window.Icon = AppIcon.Image;
             Find<Image>("AppMark").Source = AppIcon.Image;
             idleNotice = new IdleNotice(window, OpenCandidates);
@@ -202,6 +204,7 @@ namespace GpuWatch
                 if (item != null) { lowLimit = int.Parse((string)item.Tag); Render(); }
             };
             Find<Button>("Pause").Click += (sender, args) => TogglePause();
+            Find<Button>("AddServer").Click += (sender, args) => AddServer();
             Find<Button>("IdleAlertsToggle").Click += (sender, args) => ToggleIdleAlerts();
             Find<Button>("Pin").Click += (sender, args) => { window.Topmost = !window.Topmost; RenderControls(); };
             Find<Button>("Candidates").Click += (sender, args) => SwitchView("candidates");
@@ -253,6 +256,25 @@ namespace GpuWatch
             Render();
             renderTimer.Start();
             noticeTimer.Start();
+            if (hostIds.Count == 0) window.Dispatcher.BeginInvoke(new Action(AddServer), DispatcherPriority.ContextIdle);
+        }
+
+        private void UpdateTileColumns()
+        {
+            Find<ItemsControl>("ServerTiles").Tag = Math.Max(1, Math.Min(3, hostIds.Count));
+        }
+
+        private void AddServer()
+        {
+            if (exiting || !window.IsVisible) return;
+            var host = AddServerWindow.Prompt(window, ConfigDirectory);
+            if (host == null) return;
+            hostIds.Add(host.name);
+            servers.Add(host.name, host);
+            readings.Add(host.name, new HostReading { Id = host.name, State = ConnectionState.Connecting });
+            UpdateTileColumns();
+            if (session != null) StartHost(host.name, session.Token);
+            Render();
         }
 
         public void EnableTray()
@@ -389,26 +411,27 @@ namespace GpuWatch
         private void StartMonitoring()
         {
             session = new CancellationTokenSource();
-            var token = session.Token;
-            foreach (var id in hostIds)
+            foreach (var id in hostIds) StartHost(id, session.Token);
+        }
+
+        private void StartHost(string id, CancellationToken token)
+        {
+            readings[id].State = ConnectionState.Connecting;
+            var monitor = new SshMonitor(servers[id], collector);
+            Task.Run(() => monitor.RunAsync(reading =>
             {
-                readings[id].State = ConnectionState.Connecting;
-                var monitor = new SshMonitor(servers[id], collector);
-                Task.Run(() => monitor.RunAsync(reading =>
+                window.Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
                 {
-                    window.Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+                    if (token.IsCancellationRequested) return;
+                    if (reading.Data == null)
                     {
-                        if (token.IsCancellationRequested) return;
-                        if (reading.Data == null)
-                        {
-                            reading.Data = readings[reading.Id].Data;
-                            reading.SampledAt = readings[reading.Id].SampledAt;
-                        }
-                        readings[reading.Id] = reading;
-                        dirty = true;
-                    }));
-                }, token));
-            }
+                        reading.Data = readings[reading.Id].Data;
+                        reading.SampledAt = readings[reading.Id].SampledAt;
+                    }
+                    readings[reading.Id] = reading;
+                    dirty = true;
+                }));
+            }, token));
         }
 
         private void StopMonitoring()
@@ -450,14 +473,14 @@ namespace GpuWatch
             var low = candidates.Count - idle;
             var recent = readings.Values.Max(host => host.SampledAt);
             var online = liveHosts.Count;
-            Find<TextBlock>("Summary").Text = online + " / " + hostIds.Length + " 台在线  ·  " + allRows.Count(row => liveHosts.Contains(row.Host)) +
+            Find<TextBlock>("Summary").Text = online + " / " + hostIds.Count + " 台在线  ·  " + allRows.Count(row => liveHosts.Contains(row.Host)) +
                 " 张 GPU  ·  " + idle + " 张空闲  ·  " + low + " 张低显存";
             Find<TextBlock>("LastSample").Text = recent.HasValue ? (paused ? "暂停于 " : "更新 ") + recent.Value.ToString("HH:mm:ss") : "等待首次采样";
             var badge = Find<Border>("LiveBadge");
             var liveText = Find<TextBlock>("LiveText");
             var joining = readings.Values.Any(host => host.State == ConnectionState.Connecting && !host.SampledAt.HasValue);
-            var healthy = online == hostIds.Length && liveHosts.All(id => readings[id].Data.error == null);
-            liveText.Text = paused ? "已暂停" : healthy ? "实时 · 2 秒" : online == hostIds.Length ? "部分读数异常" : online > 0 ? "部分在线" : joining ? "连接中" : "采样中断";
+            var healthy = hostIds.Count > 0 && online == hostIds.Count && liveHosts.All(id => readings[id].Data.error == null);
+            liveText.Text = hostIds.Count == 0 ? "待添加" : paused ? "已暂停" : healthy ? "实时 · 2 秒" : online == hostIds.Count ? "部分读数异常" : online > 0 ? "部分在线" : joining ? "连接中" : "采样中断";
             liveText.Foreground = !paused && healthy ? Palette.Mint : Palette.Amber;
             Find<System.Windows.Shapes.Ellipse>("LiveDot").Fill = liveText.Foreground;
             badge.Background = !paused && healthy ? Palette.GreenSurface : Palette.GoldSurface;
@@ -466,6 +489,13 @@ namespace GpuWatch
             RenderRecommendation(candidates, allRows, online);
             RenderHostTiles(allRows, candidates);
             RenderList(allRows, candidates);
+            if (hostIds.Count == 0)
+            {
+                Find<TextBlock>("RecommendationDevice").Text = "添加第一台服务器";
+                Find<TextBlock>("RecommendationDetail").Text = "点击「添加服务器」填写 SSH 连接信息";
+                ShowEmpty(true, "还没有服务器", "添加后即可查看空闲显卡、进程和磁盘余量");
+                Find<Grid>("DiskPane").Visibility = Visibility.Collapsed;
+            }
         }
 
         private void RenderRecommendation(List<CardView> candidates, List<CardView> allRows, int online)
@@ -549,7 +579,7 @@ namespace GpuWatch
             if (focusedId != null)
             {
                 tiles.UpdateLayout();
-                var item = tiles.ItemContainerGenerator.ContainerFromIndex(Array.IndexOf(hostIds, focusedId)) as DependencyObject;
+                var item = tiles.ItemContainerGenerator.ContainerFromIndex(hostIds.IndexOf(focusedId)) as DependencyObject;
                 if (item != null) FocusFirstButton(item);
             }
         }
@@ -704,11 +734,12 @@ namespace GpuWatch
         [DllImport("user32.dll")] private static extern bool AllowSetForegroundWindow(int processId);
 
         [STAThread]
-        public static int Main()
+        public static int Main(string[] args)
         {
+            if (AskPass.IsRequested) return AskPass.Reply(args);
             bool first;
-            using (var showRequest = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\GpuWatch.Desktop.Show"))
-            using (var instance = new Mutex(true, "Local\\GpuWatch.Desktop", out first))
+            using (var showRequest = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\GpuIdleWatch.Public.Show"))
+            using (var instance = new Mutex(true, "Local\\GpuIdleWatch.Public", out first))
             {
                 if (!first)
                 {
@@ -727,7 +758,7 @@ namespace GpuWatch
                     string collector;
                     using (var resource = assembly.GetManifestResourceStream("Dashboard.xaml")) window = (Window)XamlReader.Load(resource);
                     using (var resource = new StreamReader(assembly.GetManifestResourceStream("collect.py"))) collector = resource.ReadToEnd();
-                    var dashboard = new Dashboard(window, collector, ServerConfig.Load(AppDomain.CurrentDomain.BaseDirectory));
+                    var dashboard = new Dashboard(window, collector, ServerConfig.Load(Dashboard.ConfigDirectory));
                     app.MainWindow = window;
                     dashboard.EnableTray();
                     var activation = ThreadPool.RegisterWaitForSingleObject(showRequest, (state, timedOut) =>

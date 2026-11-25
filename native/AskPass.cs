@@ -6,10 +6,15 @@ using System.Text.RegularExpressions;
 
 namespace GpuWatch
 {
-    // OpenSSH starts this program with the prompt as its only argument.
+    // OpenSSH starts a second copy of the desktop EXE with its prompt as the only argument.
     internal static class AskPass
     {
-        public static int Main(string[] args)
+        public static bool IsRequested
+        {
+            get { return Environment.GetEnvironmentVariable("GPUWATCH_MODE") == "askpass"; }
+        }
+
+        public static int Reply(string[] args)
         {
             var alias = Environment.GetEnvironmentVariable("GPUWATCH_SSH_ALIAS");
             var promptType = Environment.GetEnvironmentVariable("SSH_ASKPASS_PROMPT");

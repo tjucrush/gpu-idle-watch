@@ -1,27 +1,62 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import http from 'node:http';
+import { isIP } from 'node:net';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const port = Number(process.env.GPU_DASHBOARD_PORT || 8787);
 const address = '127.0.0.1';
 const interval = 2000;
 const historyWindow = 300_000;
-const askPass = fileURLToPath(new URL('./GpuWatch.AskPass.exe', import.meta.url));
+const root = fileURLToPath(new URL('./', import.meta.url));
+const profile = process.platform === 'win32' && path.isAbsolute(process.env.LOCALAPPDATA || '')
+  ? path.join(process.env.LOCALAPPDATA, 'GpuWatch') : null;
+const askPass = ['GPU-Idle-Watch.exe', 'GpuWatch.AskPass.exe']
+  .map((filename) => path.join(root, filename)).find(existsSync);
+const windowsRoot = process.env.SystemRoot || process.env.WINDIR || '';
+const systemSsh = process.platform === 'win32' && path.isAbsolute(windowsRoot)
+  ? path.join(windowsRoot, process.arch === 'ia32' && process.env.PROCESSOR_ARCHITEW6432 ? 'Sysnative' : 'System32',
+    'OpenSSH', 'ssh.exe') : null;
+
+function directEndpoint(entry, label) {
+  if (entry.host == null && entry.user == null) return null;
+  if (!profile) throw new Error(`${label} 的直接连接需要 Windows 桌面版的已信任主机记录。`);
+  let host = typeof entry.host === 'string' ? entry.host.trim().toLowerCase() : '';
+  if (host.startsWith('[') && host.endsWith(']') && host.includes(':')) host = host.slice(1, -1);
+  const dnsName = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.?$/;
+  if (host.includes('%') || (!isIP(host) && (host.length > 253 || /^[0-9.]*$/.test(host) || !dnsName.test(host)))) {
+    throw new Error(`${label} 的 host 需要有效的 IP 或主机名。`);
+  }
+  // The desktop writes canonical addresses. Preserve its dotted IPv4 tail in mixed IPv6 notation.
+  if (isIP(host) === 6 && !host.includes('.')) host = new URL(`http://[${host}]`).hostname.slice(1, -1);
+  const user = typeof entry.user === 'string' ? entry.user.trim() : '';
+  const port = entry.port ?? 22;
+  if (!/^[A-Za-z0-9_][A-Za-z0-9_.@\\-]*\$?$/.test(user) || !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`${label} 的 SSH 账号或端口无效。`);
+  }
+  const id = createHash('sha256').update(`${host}\n${port}`).digest('hex');
+  const pin = path.join(profile, 'known_hosts', `${id}.hosts`);
+  return { host, user, port, pin };
+}
 
 function readHosts() {
   let config;
   try {
-    const json = readFileSync(new URL('./servers.local.json', import.meta.url), 'utf8');
+    const local = path.join(root, 'servers.local.json');
+    const configPath = existsSync(local) || !profile ? local : path.join(profile, 'servers.local.json');
+    const json = readFileSync(configPath, 'utf8');
     config = JSON.parse(json.replace(/^\uFEFF/, ''));
   } catch (error) {
     throw new Error(error.code === 'ENOENT'
-      ? '请先将 servers.example.json 复制为 servers.local.json，填写自己的服务器配置。'
+      ? '请先在桌面版添加服务器，或在源码目录配置 servers.local.json。'
       : '无法读取 servers.local.json，请检查文件编码和 JSON 格式。');
   }
   if (!Array.isArray(config?.servers) || !config.servers.length) throw new Error('请在 servers.local.json 中至少配置一台服务器。');
   const aliases = new Set();
   const names = new Set();
+  const endpoints = new Set();
   return config.servers.map((entry, index) => {
     const label = `servers.local.json 第 ${index + 1} 台服务器`;
     const { name, ssh, mount, auth = 'key' } = entry || {};
@@ -31,7 +66,13 @@ function readHosts() {
     if (auth !== 'key' && auth !== 'password') throw new Error(`${label} 的 auth 仅支持 key 或 password。`);
     names.add(name.trim().toLowerCase());
     aliases.add(ssh.toLowerCase());
-    return { id: String(index + 1), name: name.trim(), ssh, auth };
+    const direct = directEndpoint(entry, label);
+    if (direct) {
+      const key = JSON.stringify([direct.host, direct.port, direct.user]);
+      if (endpoints.has(key)) throw new Error(`${label} 的服务器地址、端口和账号重复。`);
+      endpoints.add(key);
+    }
+    return { id: String(index + 1), name: name.trim(), ssh, auth, direct };
   });
 }
 const hosts = readHosts();
@@ -100,22 +141,35 @@ class HostMonitor {
     this.stderr = '';
     this.publish();
     const passwordAuth = this.host.auth === 'password';
-    if (passwordAuth && !existsSync(askPass)) {
-      this.fail('找不到 GpuWatch.AskPass.exe，请运行项目的构建脚本或使用发行包');
+    if (passwordAuth && !askPass) {
+      this.fail('找不到密码助手，请在源码目录构建桌面版或放入 GPU-Idle-Watch.exe');
       return;
     }
+    if (passwordAuth && !systemSsh) {
+      this.fail('密码登录需要 Windows OpenSSH 客户端。');
+      return;
+    }
+    const direct = this.host.direct;
+    if (direct && !existsSync(direct.pin)) {
+      this.fail('未找到已信任的主机记录，请先在桌面版确认服务器指纹。');
+      return;
+    }
+    const targetOptions = direct ? ['-F', 'none', '-o',
+      `UserKnownHostsFile="${direct.pin.replaceAll('\\', '/').replaceAll('%', '%%')}"`,
+      '-o', 'GlobalKnownHostsFile=none', '-o', 'UpdateHostKeys=no', '-p', String(direct.port), '-l', direct.user] : [];
     const authOptions = passwordAuth
       ? ['-o', 'BatchMode=no', '-o', 'PreferredAuthentications=password', '-o', 'PasswordAuthentication=yes',
         '-o', 'PubkeyAuthentication=no', '-o', 'KbdInteractiveAuthentication=no', '-o', 'NumberOfPasswordPrompts=1']
       : ['-o', 'BatchMode=yes', '-o', 'PreferredAuthentications=publickey'];
-    const env = passwordAuth ? { ...process.env, SSH_ASKPASS: askPass, SSH_ASKPASS_REQUIRE: 'force',
-      GPUWATCH_SSH_ALIAS: this.host.ssh, DISPLAY: process.env.DISPLAY || 'local' } : process.env;
-    const child = spawn('ssh', [
+    // Windows OpenSSH can pass an ASCII helper name even when its working directory contains Unicode.
+    const env = passwordAuth ? { ...process.env, SSH_ASKPASS: '.\\' + path.basename(askPass), SSH_ASKPASS_REQUIRE: 'force',
+      GPUWATCH_MODE: 'askpass', GPUWATCH_SSH_ALIAS: this.host.ssh, DISPLAY: process.env.DISPLAY || 'local' } : process.env;
+    const child = spawn(passwordAuth ? systemSsh : 'ssh', [
       '-T', ...authOptions, '-o', 'StrictHostKeyChecking=yes',
       '-o', 'ConnectTimeout=6', '-o', 'ConnectionAttempts=1', '-o', 'ClearAllForwardings=yes',
       '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=2', '-o', 'LogLevel=ERROR',
-      this.host.ssh, remoteCommand,
-    ], { env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      ...targetOptions, '--', direct ? direct.host : this.host.ssh, remoteCommand,
+    ], { env, cwd: passwordAuth ? path.dirname(askPass) : undefined, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     this.child = child;
     let buffer = '';
     child.stderr.setEncoding('utf8').on('data', (data) => {

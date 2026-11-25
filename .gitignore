@@ -18,10 +18,10 @@ known_hosts*
 *.log
 *.db
 *.exe
+!downloads/GPU-Idle-Watch.exe
 *.dll
 *.pdb
 *.zip
-!downloads/gpu-idle-watch-windows.zip
 __pycache__/
 *.py[cod]
 dist/
