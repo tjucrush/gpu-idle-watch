@@ -16,11 +16,21 @@ namespace GpuWatch
         public string ssh { get; set; }
         public string mount { get; set; }
         public string auth { get; set; }
+        public string credential { get; set; }
         public string host { get; set; }
         public string user { get; set; }
         public int port { get; set; }
 
         public ServerDefinition() { port = 22; }
+
+        internal string CredentialAlias { get { return credential ?? ssh; } }
+
+        internal bool Matches(ServerDefinition other)
+        {
+            return other != null && ssh == other.ssh && name == other.name && auth == other.auth &&
+                host == other.host && user == other.user && port == other.port && mount == other.mount &&
+                credential == other.credential;
+        }
     }
 
     internal static class ServerConfig
@@ -85,6 +95,8 @@ namespace GpuWatch
             value.auth = value.auth ?? "key";
             if (value.auth != "key" && value.auth != "password")
                 throw new InvalidDataException("SSH 认证方式应为 key 或 password。");
+            if (value.credential != null && !IsManagedId(value.credential))
+                throw new InvalidDataException("服务器使用了无效的密码凭据编号。");
             if (value.host == null && value.user == null) return; // Existing SSH alias.
             value.host = NormalizeHost(value.host);
             if (value.port < 1 || value.port > 65535)
@@ -95,6 +107,11 @@ namespace GpuWatch
             if (existing.Any(s => string.Equals(s.host, value.host, StringComparison.OrdinalIgnoreCase) &&
                                   s.port == value.port && s.user == value.user))
                 throw new InvalidDataException("这个地址、端口和账号已经添加过了。");
+        }
+
+        internal static bool IsManagedId(string id)
+        {
+            return id != null && Regex.IsMatch(id, @"\Agpu-[a-f0-9]{32}\z");
         }
 
         internal static string NormalizeHost(string input)

@@ -179,7 +179,7 @@ namespace GpuWatch
                             var diagnostic = errors != null && errors.Status == TaskStatus.RanToCompletion ? errors.Result : "";
                             if (host.auth == "password" && IsAuthFailure(diagnostic))
                             {
-                                emit(ConnectionState.Offline, "SSH 密码认证失败，修正凭据后可暂停再继续");
+                                emit(ConnectionState.Offline, "SSH 密码认证失败，请点击服务器卡片上的「编辑」更新密码");
                                 return;
                             }
                             emit(ConnectionState.Offline, Explain(error, diagnostic));
@@ -196,10 +196,16 @@ namespace GpuWatch
 
         public static Task VerifyLoginAsync(ServerDefinition candidate)
         {
+            return VerifyLoginAsync(candidate, CancellationToken.None);
+        }
+
+        public static Task VerifyLoginAsync(ServerDefinition candidate, CancellationToken token)
+        {
             return Task.Run(() =>
             {
                 using (var ssh = new Process { StartInfo = BuildStartInfo(candidate, "true") })
                 {
+                    token.ThrowIfCancellationRequested();
                     try
                     {
                         if (!ssh.Start()) throw new IOException("无法启动 SSH 客户端");
@@ -208,6 +214,7 @@ namespace GpuWatch
                     {
                         throw new IOException("请安装 Windows OpenSSH 客户端后重试。");
                     }
+                    using (token.Register(() => Stop(ssh)))
                     try
                     {
                         ssh.StandardInput.Close();
@@ -215,15 +222,17 @@ namespace GpuWatch
                         var error = ssh.StandardError.ReadToEndAsync();
                         if (!ssh.WaitForExit(15000) || !Task.WaitAll(new Task[] { output, error }, 1000))
                             throw new IOException("SSH 登录验证超时，请检查地址、端口和网络后重试。");
+                        token.ThrowIfCancellationRequested();
                         if (ssh.ExitCode == 0) return;
                         if (IsAuthFailure(error.Result))
-                            throw new IOException("SSH 登录失败，请核对账号和密码，并确认服务器允许密码登录。");
+                            throw new IOException(candidate.auth == "key" ? "SSH 密钥登录失败，请检查此别名的密钥与 ssh-agent。" :
+                                "SSH 登录失败，请核对账号和密码，并确认服务器允许密码登录。");
                         var reason = Explain(new EndOfStreamException(), error.Result);
                         throw new IOException("SSH 登录验证失败：" + (reason == "采样连接中断" ? "请检查服务器 SSH 设置和网络。" : reason));
                     }
                     finally { Stop(ssh); }
                 }
-            });
+            }, token);
         }
 
         private static ProcessStartInfo BuildStartInfo(ServerDefinition host, string command)
@@ -262,7 +271,7 @@ namespace GpuWatch
                 start.EnvironmentVariables["SSH_ASKPASS"] = @".\" + AskPassFileName(exe);
                 start.EnvironmentVariables["SSH_ASKPASS_REQUIRE"] = "force";
                 start.EnvironmentVariables["DISPLAY"] = "gpu-watch:0";
-                start.EnvironmentVariables["GPUWATCH_SSH_ALIAS"] = host.ssh;
+                start.EnvironmentVariables["GPUWATCH_SSH_ALIAS"] = host.CredentialAlias;
                 start.EnvironmentVariables["GPUWATCH_MODE"] = "askpass";
             }
             return start;
@@ -325,7 +334,7 @@ namespace GpuWatch
             return result.Append('\\', slashes * 2).Append('"').ToString();
         }
 
-        private static void Stop(Process process)
+        internal static void Stop(Process process)
         {
             try { if (!process.HasExited) process.Kill(); }
             catch (InvalidOperationException) { }

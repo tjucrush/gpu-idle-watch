@@ -18,8 +18,8 @@ using System.Windows.Threading;
 [assembly: AssemblyTitle("GPU 空闲卡监控")]
 [assembly: AssemblyDescription("通过 SSH 查看 NVIDIA 显卡、计算进程和磁盘余量")]
 [assembly: AssemblyProduct("GPU 空闲卡监控")]
-[assembly: AssemblyVersion("1.2.0.0")]
-[assembly: AssemblyFileVersion("1.2.0.0")]
+[assembly: AssemblyVersion("1.3.0.0")]
+[assembly: AssemblyFileVersion("1.3.0.0")]
 
 namespace GpuWatch
 {
@@ -86,6 +86,7 @@ namespace GpuWatch
         public bool Candidate { get { return State == CardState.Idle || State == CardState.LowMemory; } }
         public double? RemainingMiB { get { return Gpu.memoryTotal.HasValue && Gpu.memoryUsed.HasValue ? Math.Max(0, Gpu.memoryTotal.Value - Gpu.memoryUsed.Value) : (double?)null; } }
         public string Device { get { return Host + " · GPU " + Gpu.index; } }
+        public string NoticeKey { get { return Host + "\0" + Gpu.index; } }
         public int GpuIndex { get { return Gpu.index; } }
         public string Model { get { return (Gpu.name ?? "未知型号").Replace("NVIDIA GeForce ", "").Replace("NVIDIA ", ""); } }
         public string SlotHint { get { return Device + " · " + StateLabel + " · 剩余 " + FreeMemory; } }
@@ -173,7 +174,14 @@ namespace GpuWatch
         private readonly HashSet<string> announcedIdle = new HashSet<string>();
         private readonly HashSet<string> displayedIdle = new HashSet<string>();
         private bool idleAlertsEnabled = true;
-        private CancellationTokenSource session;
+        private sealed class MonitorSession
+        {
+            public readonly CancellationTokenSource Source = new CancellationTokenSource();
+            public Task Work;
+        }
+
+        private readonly Dictionary<string, MonitorSession> sessions = new Dictionary<string, MonitorSession>();
+        private bool monitoring;
         private DateTime frozenAt;
         private bool paused;
         private bool dirty = true;
@@ -273,7 +281,66 @@ namespace GpuWatch
             servers.Add(host.name, host);
             readings.Add(host.name, new HostReading { Id = host.name, State = ConnectionState.Connecting });
             UpdateTileColumns();
-            if (session != null) StartHost(host.name, session.Token);
+            if (monitoring) StartHost(host.name);
+            Render();
+        }
+
+        private void EditServer(ServerDefinition original)
+        {
+            var updated = AddServerWindow.Edit(window, ConfigDirectory, original);
+            if (updated == null || ReferenceEquals(original, updated)) return;
+            ApplyServerChange(original, updated);
+        }
+
+        private void RemoveServer(ServerDefinition server)
+        {
+            var description = !string.IsNullOrEmpty(server.host)
+                ? (server.host.Contains(":") ? "[" + server.host + "]" : server.host) + ":" + server.port
+                : "SSH 别名 " + server.ssh;
+            var answer = MessageBox.Show(window, "从本机监控移除「" + server.name + "」？\n\n" +
+                description + "   ·   " + server.mount + "\n\n删除后，本机将停止监控这台服务器。",
+                "删除服务器", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+            if (answer != MessageBoxResult.Yes) return;
+            try { ServerStore.Remove(ConfigDirectory, server); }
+            catch (Exception error)
+            {
+                MessageBox.Show(window, error.Message, "删除服务器失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            ApplyServerChange(server, null);
+        }
+
+        // Called only after the edit/delete transaction has committed.
+        private void ApplyServerChange(ServerDefinition original, ServerDefinition updated)
+        {
+            var previousId = original.name;
+            StopHost(previousId);
+            servers.Remove(previousId);
+            readings.Remove(previousId);
+            var sameTarget = updated != null && original.host == updated.host && original.user == updated.user &&
+                original.port == updated.port && original.ssh == updated.ssh;
+            var oldPrefix = previousId + "\0";
+            foreach (var key in announcedIdle.Where(k => k.StartsWith(oldPrefix, StringComparison.Ordinal)).ToList())
+            {
+                announcedIdle.Remove(key);
+                if (sameTarget) announcedIdle.Add(updated.name + "\0" + key.Substring(oldPrefix.Length));
+            }
+            if (filter == previousId)
+            {
+                filter = updated == null ? null : updated.name;
+                if (!sameTarget) deviceFilter = null;
+            }
+            if (updated == null)
+                hostIds.Remove(previousId);
+            else
+            {
+                hostIds[hostIds.IndexOf(previousId)] = updated.name;
+                servers.Add(updated.name, updated);
+                readings.Add(updated.name, new HostReading { Id = updated.name, State = ConnectionState.Connecting });
+                if (monitoring) StartHost(updated.name);
+            }
+            UpdateTileColumns();
+            CheckIdleNotices();
             Render();
         }
 
@@ -323,7 +390,16 @@ namespace GpuWatch
         {
             var button = args.OriginalSource as Button;
             if (button == null) return;
-            if (button.Tag as string == "server")
+            var action = button.Tag as string;
+            if (action == "edit-server" || action == "remove-server")
+            {
+                args.Handled = true;
+                ServerDefinition server;
+                if (!servers.TryGetValue((string)button.CommandParameter, out server)) return;
+                if (action == "edit-server") EditServer(server);
+                else RemoveServer(server);
+            }
+            else if (action == "server")
             {
                 var id = button.CommandParameter as string;
                 filter = id == filter ? null : id;
@@ -387,10 +463,10 @@ namespace GpuWatch
                     if (card.State == CardState.Idle) current.Add(card);
                     // Missing process data or a reconnect does not start a new idle period.
                     else if (gpu.utilization > Availability.MaxUtilization || gpu.memoryUsed > Availability.IdleMiB || card.Apps.Count > 0)
-                        announcedIdle.Remove(card.Device);
+                        announcedIdle.Remove(card.NoticeKey);
                 }
             }
-            var rows = current.Where(card => displayedIdle.Contains(card.Device) || !announcedIdle.Contains(card.Device))
+            var rows = current.Where(card => displayedIdle.Contains(card.NoticeKey) || !announcedIdle.Contains(card.NoticeKey))
                 .OrderByDescending(card => card.RemainingMiB).ThenBy(card => card.Host).ThenBy(card => card.Gpu.index).ToList();
             if (rows.Count == 0)
             {
@@ -399,9 +475,9 @@ namespace GpuWatch
                 return;
             }
 
-            var keys = rows.Select(card => card.Device).ToArray();
+            var keys = rows.Select(card => card.NoticeKey).ToArray();
             if (displayedIdle.SetEquals(keys)) return;
-            if (rows.Any(card => !announcedIdle.Contains(card.Device))) idleNotice.Show(rows);
+            if (rows.Any(card => !announcedIdle.Contains(card.NoticeKey))) idleNotice.Show(rows);
             else idleNotice.Update(rows);
             displayedIdle.Clear();
             displayedIdle.UnionWith(keys);
@@ -410,15 +486,18 @@ namespace GpuWatch
 
         private void StartMonitoring()
         {
-            session = new CancellationTokenSource();
-            foreach (var id in hostIds) StartHost(id, session.Token);
+            monitoring = true;
+            foreach (var id in hostIds) StartHost(id);
         }
 
-        private void StartHost(string id, CancellationToken token)
+        private void StartHost(string id)
         {
+            var session = new MonitorSession();
+            sessions.Add(id, session);
+            var token = session.Source.Token;
             readings[id].State = ConnectionState.Connecting;
             var monitor = new SshMonitor(servers[id], collector);
-            Task.Run(() => monitor.RunAsync(reading =>
+            session.Work = Task.Run(() => monitor.RunAsync(reading =>
             {
                 window.Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
                 {
@@ -436,9 +515,17 @@ namespace GpuWatch
 
         private void StopMonitoring()
         {
-            if (session == null) return;
-            session.Cancel();
-            session = null;
+            monitoring = false;
+            foreach (var id in sessions.Keys.ToList()) StopHost(id);
+        }
+
+        private void StopHost(string id)
+        {
+            MonitorSession session;
+            if (!sessions.TryGetValue(id, out session)) return;
+            sessions.Remove(id);
+            session.Source.Cancel();
+            session.Work.ContinueWith(completed => session.Source.Dispose(), TaskScheduler.Default);
         }
 
         private bool IsLive(HostReading host)
@@ -548,7 +635,9 @@ namespace GpuWatch
         private void RenderHostTiles(List<CardView> allRows, List<CardView> candidates)
         {
             var focused = System.Windows.Input.Keyboard.FocusedElement as Button;
-            var focusedId = focused != null && focused.Tag as string == "server" ? focused.CommandParameter as string : null;
+            var focusedAction = focused == null ? null : focused.Tag as string;
+            var focusedId = focusedAction == "server" || focusedAction == "edit-server" || focusedAction == "remove-server"
+                ? focused.CommandParameter as string : null;
             var tiles = Find<ItemsControl>("ServerTiles");
             tiles.ItemsSource = hostIds.Select(id =>
             {
@@ -574,22 +663,25 @@ namespace GpuWatch
                     Background = filter == id ? Palette.BlueSurface : idle > 0 ? Palette.GreenSurface : Palette.Normal,
                     Tooltip = "筛选服务器 " + id + (host.Issue == null ? "" : " · " + host.Issue) + (host.SampledAt.HasValue ? " · 读数 " + host.SampledAt.Value.ToString("HH:mm:ss") : ""),
                     AccessibleName = "查看服务器 " + id + "，" + (live ? idle + " 张空闲，" + low + " 张低显存" : connection),
+                    EditLabel = "编辑服务器 " + id, RemoveLabel = "删除服务器 " + id,
                 };
             }).ToList();
             if (focusedId != null)
             {
+                int itemIndex = hostIds.IndexOf(focusedId);
+                if (itemIndex < 0) { Find<Button>("AddServer").Focus(); return; }
                 tiles.UpdateLayout();
-                var item = tiles.ItemContainerGenerator.ContainerFromIndex(hostIds.IndexOf(focusedId)) as DependencyObject;
-                if (item != null) FocusFirstButton(item);
+                var item = tiles.ItemContainerGenerator.ContainerFromIndex(itemIndex) as DependencyObject;
+                if (item != null) FocusTileAction(item, focusedAction);
             }
         }
 
-        private static bool FocusFirstButton(DependencyObject root)
+        private static bool FocusTileAction(DependencyObject root, string action)
         {
             var button = root as Button;
-            if (button != null) return button.Focus();
+            if (button != null && button.Tag as string == action) return button.Focus();
             for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
-                if (FocusFirstButton(VisualTreeHelper.GetChild(root, index))) return true;
+                if (FocusTileAction(VisualTreeHelper.GetChild(root, index), action)) return true;
             return false;
         }
 

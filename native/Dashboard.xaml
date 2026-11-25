@@ -53,8 +53,13 @@
         </Setter.Value>
       </Setter>
     </Style>
+    <Style x:Key="TileAction" TargetType="Button" BasedOn="{StaticResource Button}">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Padding" Value="5,2" />
+      <Setter Property="MinHeight" Value="24" />
+      <Setter Property="Background" Value="#192536" />
+    </Style>
     <Style x:Key="TileButton" TargetType="Button" BasedOn="{StaticResource Button}">
-      <Setter Property="Margin" Value="0,0,9,0" />
       <Setter Property="Padding" Value="13,10" />
       <Setter Property="Template">
         <Setter.Value>
@@ -181,22 +186,25 @@
       <UniformGrid Columns="{Binding Tag, RelativeSource={RelativeSource AncestorType={x:Type ItemsControl}}}" />
     </ItemsPanelTemplate>
     <DataTemplate x:Key="ServerTile">
+      <Grid Margin="0,0,9,0">
       <Button Style="{StaticResource TileButton}" Tag="server" CommandParameter="{Binding Id}"
               Background="{Binding Background}" BorderBrush="{Binding Border}" ToolTip="{Binding Tooltip}"
               AutomationProperties.Name="{Binding AccessibleName}">
         <Grid>
           <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-          <DockPanel LastChildFill="True">
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="6,0,0,0">
-              <Ellipse Height="6" Width="6" Fill="{Binding ConnectionColor}" Margin="0,0,5,0" />
-              <TextBlock Text="{Binding ConnectionLabel}" Foreground="{Binding ConnectionColor}" FontSize="12" />
+          <TextBlock Text="{Binding Title}" FontSize="15" FontWeight="Bold" MinHeight="24" Margin="0,0,85,0"
+                     FontFamily="Cascadia Mono, Consolas, Microsoft YaHei UI" TextTrimming="CharacterEllipsis" />
+          <Grid Grid.Row="1" Margin="0,3,0,5">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Foreground="{StaticResource Muted}" Margin="0,0,12,0"><Run Text="{Binding Idle, Mode=OneWay}" FontSize="27" FontFamily="Consolas" FontWeight="Bold" Foreground="{Binding IdleColor}"/><Run Text=" 空闲" FontSize="12"/></TextBlock>
+              <TextBlock Foreground="{StaticResource Muted}"><Run Text="{Binding Low, Mode=OneWay}" FontSize="27" FontFamily="Consolas" FontWeight="Bold" Foreground="{Binding LowColor}"/><Run Text=" 低显存" FontSize="12"/></TextBlock>
             </StackPanel>
-            <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="Bold" FontFamily="Cascadia Mono, Consolas" TextTrimming="CharacterEllipsis" />
-          </DockPanel>
-          <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,4,0,5">
-            <TextBlock Foreground="{StaticResource Muted}" Margin="0,0,15,0"><Run Text="{Binding Idle, Mode=OneWay}" FontSize="27" FontFamily="Consolas" FontWeight="Bold" Foreground="{Binding IdleColor}"/><Run Text=" 空闲" FontSize="12"/></TextBlock>
-            <TextBlock Foreground="{StaticResource Muted}"><Run Text="{Binding Low, Mode=OneWay}" FontSize="27" FontFamily="Consolas" FontWeight="Bold" Foreground="{Binding LowColor}"/><Run Text=" 低显存" FontSize="12"/></TextBlock>
-          </StackPanel>
+            <DockPanel Grid.Column="1" HorizontalAlignment="Right" Margin="5,0,0,0" ToolTip="{Binding ConnectionLabel}">
+              <Ellipse Height="6" Width="6" Fill="{Binding ConnectionColor}" Margin="0,0,4,0" />
+              <TextBlock Text="{Binding ConnectionLabel}" Foreground="{Binding ConnectionColor}" FontSize="12" TextTrimming="CharacterEllipsis" />
+            </DockPanel>
+          </Grid>
           <DockPanel Grid.Row="2" Margin="0,0,0,7" MinHeight="22">
             <TextBlock Text="GPU" FontFamily="Consolas" FontSize="11" Foreground="{StaticResource Dim}" Margin="0,0,5,2"/>
             <ItemsControl ItemsSource="{Binding Slots}">
@@ -217,6 +225,13 @@
           </Border>
         </Grid>
       </Button>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,10,12,0">
+        <Button Style="{StaticResource TileAction}" Content="编辑" Tag="edit-server" CommandParameter="{Binding Id}" Foreground="#ACC6FF"
+                ToolTip="编辑服务器" AutomationProperties.Name="{Binding EditLabel}" />
+        <Button Style="{StaticResource TileAction}" Content="删除" Tag="remove-server" CommandParameter="{Binding Id}" Foreground="#F1ABB2" Margin="4,0,0,0"
+                ToolTip="删除服务器" AutomationProperties.Name="{Binding RemoveLabel}" />
+      </StackPanel>
+      </Grid>
     </DataTemplate>
     <DataTemplate x:Key="GpuRow">
       <Border Margin="0,0,0,5" Padding="9,7" Background="{Binding Background}" BorderBrush="{Binding Border}" BorderThickness="1" CornerRadius="8">

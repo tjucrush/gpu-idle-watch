@@ -59,11 +59,14 @@ function readHosts() {
   const endpoints = new Set();
   return config.servers.map((entry, index) => {
     const label = `servers.local.json 第 ${index + 1} 台服务器`;
-    const { name, ssh, mount, auth = 'key' } = entry || {};
+    const { name, ssh, mount, auth = 'key', credential } = entry || {};
     if (typeof name !== 'string' || !name.trim() || names.has(name.trim().toLowerCase())) throw new Error(`${label} 需要唯一的显示名称 name。`);
     if (typeof ssh !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(ssh) || aliases.has(ssh.toLowerCase())) throw new Error(`${label} 需要唯一有效的 OpenSSH 别名 ssh。`);
     if (typeof mount !== 'string' || !mount.startsWith('/') || /[\u0000-\u001f\u007f-\u009f]/u.test(mount)) throw new Error(`${label} 的 mount 应为 Linux 绝对路径。`);
     if (auth !== 'key' && auth !== 'password') throw new Error(`${label} 的 auth 仅支持 key 或 password。`);
+    if (credential != null && (typeof credential !== 'string' || !/^gpu-[0-9a-f]{32}$/.test(credential))) {
+      throw new Error(`${label} 的密码凭据标识无效。`);
+    }
     names.add(name.trim().toLowerCase());
     aliases.add(ssh.toLowerCase());
     const direct = directEndpoint(entry, label);
@@ -72,7 +75,7 @@ function readHosts() {
       if (endpoints.has(key)) throw new Error(`${label} 的服务器地址、端口和账号重复。`);
       endpoints.add(key);
     }
-    return { id: String(index + 1), name: name.trim(), ssh, auth, direct };
+    return { id: String(index + 1), name: name.trim(), ssh, auth, direct, credential: credential ?? ssh };
   });
 }
 const hosts = readHosts();
@@ -163,7 +166,7 @@ class HostMonitor {
       : ['-o', 'BatchMode=yes', '-o', 'PreferredAuthentications=publickey'];
     // Windows OpenSSH can pass an ASCII helper name even when its working directory contains Unicode.
     const env = passwordAuth ? { ...process.env, SSH_ASKPASS: '.\\' + path.basename(askPass), SSH_ASKPASS_REQUIRE: 'force',
-      GPUWATCH_MODE: 'askpass', GPUWATCH_SSH_ALIAS: this.host.ssh, DISPLAY: process.env.DISPLAY || 'local' } : process.env;
+      GPUWATCH_MODE: 'askpass', GPUWATCH_SSH_ALIAS: this.host.credential, DISPLAY: process.env.DISPLAY || 'local' } : process.env;
     const child = spawn(passwordAuth ? systemSsh : 'ssh', [
       '-T', ...authOptions, '-o', 'StrictHostKeyChecking=yes',
       '-o', 'ConnectTimeout=6', '-o', 'ConnectionAttempts=1', '-o', 'ClearAllForwardings=yes',

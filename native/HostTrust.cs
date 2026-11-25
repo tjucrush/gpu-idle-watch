@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 
@@ -33,15 +34,17 @@ namespace GpuWatch
             return FileOption(PinPath(host, port));
         }
 
-        internal static async Task<bool> EnsureAsync(Window owner, string host, int port, string user)
+        internal static async Task<bool> EnsureAsync(Window owner, string host, int port, string user, CancellationToken token = default(CancellationToken))
         {
+            token.ThrowIfCancellationRequested();
             var destination = PinPath(host, port);
             if (File.Exists(destination)) return true; // The login probe still requires a matching key.
             Directory.CreateDirectory(Path.GetDirectoryName(destination));
             var temporary = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
-                await Task.Run(() => ReadNegotiatedKey(host, port, user, temporary));
+                await Task.Run(() => ReadNegotiatedKey(host, port, user, temporary, token), token);
+                token.ThrowIfCancellationRequested();
                 if (!owner.IsVisible) return false;
                 var line = File.ReadLines(temporary).FirstOrDefault(s => s.Length > 0 && s[0] != '#');
                 var fields = (line ?? "").Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
@@ -63,7 +66,7 @@ namespace GpuWatch
 
         // OpenSSH negotiates the same host key as the real connection. Only its temporary
         // file accepts a new key; no password, agent identity or private key is offered.
-        private static void ReadNegotiatedKey(string host, int port, string user, string temporary)
+        private static void ReadNegotiatedKey(string host, int port, string user, string temporary, CancellationToken token)
         {
             var args = new[] { "-F", "none", "-nT", "-o", "BatchMode=yes", "-o", "PreferredAuthentications=none",
                 "-o", "StrictHostKeyChecking=accept-new", "-o", FileOption(temporary), "-o", "GlobalKnownHostsFile=none",
@@ -77,6 +80,7 @@ namespace GpuWatch
             try
             {
                 using (var ssh = Process.Start(info))
+                using (token.Register(() => SshMonitor.Stop(ssh)))
                 {
                     ssh.BeginErrorReadLine();
                     ssh.BeginOutputReadLine();
@@ -86,6 +90,7 @@ namespace GpuWatch
                         ssh.WaitForExit();
                         throw new IOException("获取 SSH 指纹超时，请检查地址、端口和网络连接。");
                     }
+                    token.ThrowIfCancellationRequested();
                 }
             }
             catch (Win32Exception) { throw new IOException("无法启动 ssh.exe，请在 Windows 可选功能中安装 OpenSSH 客户端。"); }
