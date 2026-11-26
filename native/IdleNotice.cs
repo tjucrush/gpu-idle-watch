@@ -11,12 +11,15 @@ using System.Windows.Threading;
 
 namespace GpuWatch
 {
+    internal enum NoticeCorner { TopRight, TopLeft, BottomRight, BottomLeft }
+
     internal sealed class IdleNotice
     {
         private readonly Window main;
         private readonly Action openDashboard;
         private readonly DispatcherTimer timeout;
         private Window popup;
+        private NoticeCorner corner = NoticeCorner.TopRight;
 
         public IdleNotice(Window mainWindow, Action openDashboard)
         {
@@ -25,10 +28,17 @@ namespace GpuWatch
             timeout = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
             timeout.Tick += (sender, args) => Dismiss();
             main.LocationChanged += (sender, args) => Position();
+            main.StateChanged += (sender, args) => Position();
             main.Closed += (sender, args) => Dismiss();
         }
 
         public bool IsVisible { get { return popup != null && popup.IsVisible; } }
+
+        public void SetCorner(NoticeCorner value)
+        {
+            corner = value;
+            Position();
+        }
 
         public void Show(IList<CardView> cards)
         {
@@ -93,11 +103,26 @@ namespace GpuWatch
                 var hwnd = new WindowInteropHelper(window).Handle;
                 const int extendedStyle = -20, noActivate = 0x08000000, toolWindow = 0x80;
                 SetWindowLong(hwnd, extendedStyle, GetWindowLong(hwnd, extendedStyle) | noActivate | toolWindow);
+                HwndSource.FromHwnd(hwnd).AddHook(OnDisplayMessage);
                 Position();
             };
             window.ContentRendered += (sender, args) => Position();
             window.SizeChanged += (sender, args) => Position();
             return window;
+        }
+
+        private IntPtr OnDisplayMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            const int dpiChanged = 0x02E0, displayChanged = 0x007E, settingsChanged = 0x001A, setWorkArea = 0x002F;
+            if (message == dpiChanged || message == displayChanged || (message == settingsChanged && wParam == (IntPtr)setWorkArea))
+                main.Dispatcher.BeginInvoke(new Action(Position), DispatcherPriority.Loaded);
+            return IntPtr.Zero;
+        }
+
+        private static int Align(int start, int end, int size, int inset, bool farEdge)
+        {
+            int space = Math.Max(0, end - start - size);
+            return start + (farEdge ? Math.Max(0, space - inset) : Math.Min(inset, space));
         }
 
         // Native work-area and window rectangles share screen coordinates on mixed-DPI desktops.
@@ -114,8 +139,12 @@ namespace GpuWatch
             if (!GetMonitorInfo(monitor, ref info) || !GetWindowRect(hwnd, out bounds)) return;
             double scale = source != null && source.CompositionTarget != null ? source.CompositionTarget.TransformToDevice.M11 : 1;
             int inset = (int)Math.Round(12 * scale);
-            int x = Math.Max(info.Work.Left, info.Work.Right - (bounds.Right - bounds.Left) - inset);
-            int y = Math.Max(info.Work.Top, info.Work.Bottom - (bounds.Bottom - bounds.Top) - inset);
+            popup.MaxWidth = Math.Max(1, (info.Work.Right - info.Work.Left) / scale);
+            popup.MaxHeight = Math.Max(1, (info.Work.Bottom - info.Work.Top) / scale);
+            bool right = corner == NoticeCorner.TopRight || corner == NoticeCorner.BottomRight;
+            bool bottom = corner == NoticeCorner.BottomLeft || corner == NoticeCorner.BottomRight;
+            int x = Align(info.Work.Left, info.Work.Right, bounds.Right - bounds.Left, inset, right);
+            int y = Align(info.Work.Top, info.Work.Bottom, bounds.Bottom - bounds.Top, inset, bottom);
             if (bounds.Left != x || bounds.Top != y)
             {
                 const uint noSize = 0x0001, keepZOrder = 0x0004, noActivation = 0x0010;

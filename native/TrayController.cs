@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
@@ -11,10 +12,12 @@ namespace GpuWatch
         private readonly Icon icon;
         private readonly ContextMenuStrip menu;
         private readonly ToolStripMenuItem alerts;
+        private readonly ToolStripMenuItem corners;
         private readonly NotifyIcon tray;
         private bool disposed;
 
-        public TrayController(Action open, Action toggleAlerts, Action exit)
+        public TrayController(Action open, Action toggleAlerts, IEnumerable<KeyValuePair<NoticeCorner, string>> options,
+            Action<NoticeCorner> selectCorner, Action exit)
         {
             using (Stream contents = typeof(TrayController).Assembly.GetManifestResourceStream("GpuWatch.ico"))
             {
@@ -33,14 +36,26 @@ namespace GpuWatch
                 menu.MinimumSize = new Size(TextRenderer.MeasureText("打开显卡监控", menu.Font).Width + menu.Font.Height * 4, 0);
                 var openItem = new ToolStripMenuItem("打开显卡监控", null, (sender, args) => open());
                 alerts = new ToolStripMenuItem("空闲提醒", null, (sender, args) => toggleAlerts());
+                corners = new ToolStripMenuItem("提醒位置");
+                var submenu = (ToolStripDropDownMenu)corners.DropDown;
+                submenu.ShowImageMargin = false;
+                submenu.ShowCheckMargin = true;
+                foreach (var option in options)
+                {
+                    var item = new ToolStripMenuItem(option.Value) { Tag = option.Key };
+                    item.Click += (sender, args) => selectCorner((NoticeCorner)item.Tag);
+                    submenu.Items.Add(item);
+                }
                 var exitItem = new ToolStripMenuItem("退出", null, (sender, args) => exit());
-                foreach (var item in new[] { openItem, alerts, exitItem })
+                foreach (var item in new[] { openItem, alerts, corners, exitItem })
                     item.Padding = new Padding(0, gap, gap * 2, gap);
-                menu.Items.AddRange(new ToolStripItem[] { openItem, alerts, new ToolStripSeparator(), exitItem });
+                menu.Items.AddRange(new ToolStripItem[] { openItem, alerts, corners, new ToolStripSeparator(), exitItem });
                 if (!SystemInformation.HighContrast)
                 {
                     menu.ForeColor = Color.FromArgb(235, 243, 250);
                     menu.Renderer = new TrayRenderer();
+                    submenu.ForeColor = menu.ForeColor;
+                    submenu.Renderer = menu.Renderer;
                 }
 
                 tray = new NotifyIcon { Icon = icon, Text = "GPU 空闲卡监控", ContextMenuStrip = menu };
@@ -57,6 +72,13 @@ namespace GpuWatch
         public void SetAlertsEnabled(bool enabled)
         {
             if (!disposed) alerts.Checked = enabled;
+        }
+
+        public void SetCorner(NoticeCorner corner)
+        {
+            if (disposed) return;
+            foreach (ToolStripMenuItem item in corners.DropDownItems)
+                item.Checked = (NoticeCorner)item.Tag == corner;
         }
 
         public void Dispose()

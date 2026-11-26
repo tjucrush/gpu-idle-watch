@@ -18,8 +18,8 @@ using System.Windows.Threading;
 [assembly: AssemblyTitle("GPU 空闲卡监控")]
 [assembly: AssemblyDescription("通过 SSH 查看 NVIDIA 显卡、计算进程和磁盘余量")]
 [assembly: AssemblyProduct("GPU 空闲卡监控")]
-[assembly: AssemblyVersion("1.3.0.0")]
-[assembly: AssemblyFileVersion("1.3.0.0")]
+[assembly: AssemblyVersion("1.3.1.0")]
+[assembly: AssemblyFileVersion("1.3.1.0")]
 
 namespace GpuWatch
 {
@@ -168,6 +168,14 @@ namespace GpuWatch
         private readonly DispatcherTimer renderTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
         private readonly DispatcherTimer noticeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         private readonly IdleNotice idleNotice;
+        private static readonly KeyValuePair<NoticeCorner, string>[] CornerOptions =
+        {
+            new KeyValuePair<NoticeCorner, string>(NoticeCorner.TopRight, "右上角"),
+            new KeyValuePair<NoticeCorner, string>(NoticeCorner.TopLeft, "左上角"),
+            new KeyValuePair<NoticeCorner, string>(NoticeCorner.BottomRight, "右下角"),
+            new KeyValuePair<NoticeCorner, string>(NoticeCorner.BottomLeft, "左下角")
+        };
+        private NoticeCorner noticeCorner = NoticeCorner.TopRight;
         private TrayController tray;
         private bool exiting;
         private WindowState lastVisibleState = WindowState.Normal;
@@ -204,6 +212,15 @@ namespace GpuWatch
             window.SourceInitialized += (sender, args) => ApplyDarkTitleBar(new WindowInteropHelper(window).Handle);
             foreach (var id in hostIds) readings[id] = new HostReading { Id = id, State = ConnectionState.Connecting };
             RestorePreferences();
+            var picker = Find<ComboBox>("NoticeCornerPicker");
+            foreach (var option in CornerOptions)
+                picker.Items.Add(new ComboBoxItem { Tag = option.Key, Content = option.Value });
+            picker.SelectedValue = noticeCorner;
+            idleNotice.SetCorner(noticeCorner);
+            picker.SelectionChanged += (sender, args) =>
+            {
+                if (picker.SelectedValue is NoticeCorner) SetNoticeCorner((NoticeCorner)picker.SelectedValue);
+            };
             var limitOptions = Find<ComboBox>("MemoryLimit");
             limitOptions.SelectedItem = limitOptions.Items.Cast<ComboBoxItem>().First(option => (string)option.Tag == lowLimit.ToString());
             limitOptions.SelectionChanged += (sender, args) =>
@@ -347,9 +364,10 @@ namespace GpuWatch
         public void EnableTray()
         {
             if (tray != null) return;
-            tray = new TrayController(ShowDashboard, ToggleIdleAlerts,
+            tray = new TrayController(ShowDashboard, ToggleIdleAlerts, CornerOptions, SetNoticeCorner,
                 () => window.Dispatcher.BeginInvoke(new Action(ExitApplication)));
             tray.SetAlertsEnabled(idleAlertsEnabled);
+            tray.SetCorner(noticeCorner);
             window.Closing += (sender, args) =>
             {
                 if (exiting) return;
@@ -374,6 +392,16 @@ namespace GpuWatch
             if (exiting) return;
             exiting = true;
             window.Close();
+        }
+
+        private void SetNoticeCorner(NoticeCorner corner)
+        {
+            if (corner == noticeCorner) return;
+            noticeCorner = corner;
+            idleNotice.SetCorner(corner);
+            Find<ComboBox>("NoticeCornerPicker").SelectedValue = corner;
+            if (tray != null) tray.SetCorner(corner);
+            SavePreferences();
         }
 
         private void ToggleIdleAlerts()
@@ -795,6 +823,8 @@ namespace GpuWatch
                 window.Topmost = values.Length > 1 && values[1] == "True";
                 bool enabled;
                 if (values.Length > 2 && bool.TryParse(values[2], out enabled)) idleAlertsEnabled = enabled;
+                if (values.Length > 3 && Enum.IsDefined(typeof(NoticeCorner), values[3]))
+                    noticeCorner = (NoticeCorner)Enum.Parse(typeof(NoticeCorner), values[3]);
             }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
@@ -805,7 +835,7 @@ namespace GpuWatch
             try
             {
                 Directory.CreateDirectory(RuntimeDirectory);
-                File.WriteAllLines(SettingsFile, new[] { lowLimit.ToString(), window.Topmost.ToString(), idleAlertsEnabled.ToString() });
+                File.WriteAllLines(SettingsFile, new[] { lowLimit.ToString(), window.Topmost.ToString(), idleAlertsEnabled.ToString(), noticeCorner.ToString() });
             }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }

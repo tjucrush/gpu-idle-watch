@@ -306,17 +306,19 @@
           </StackPanel>
         </Border>
         <Button x:Name="AddServer" Style="{StaticResource Button}" Content="＋ 添加服务器" Margin="0,0,7,0" Foreground="#94EDD1" BorderBrush="#356B5C" Background="#1B3832" ToolTip="填写 SSH 账号和要监控的磁盘挂载点" />
-        <Button x:Name="IdleAlertsToggle" Style="{StaticResource Button}" Content="空闲提醒 · 开" Margin="0,0,7,0" ToolTip="开启或关闭右下角的空闲显卡提醒" />
+        <Button x:Name="IdleAlertsToggle" Style="{StaticResource Button}" Content="空闲提醒 · 开" Margin="0,0,3,0" ToolTip="开启或关闭空闲显卡提醒" />
+        <ComboBox x:Name="NoticeCornerPicker" Style="{StaticResource Limit}" Width="80" Margin="0,0,7,0" SelectedValuePath="Tag"
+                  ToolTip="设置空闲提醒的位置" AutomationProperties.Name="空闲提醒位置" />
         <Button x:Name="Pin" Style="{StaticResource Button}" Content="置顶" Margin="0,0,7,0" ToolTip="让窗口显示在其他窗口上方" />
         <Button x:Name="Pause" Style="{StaticResource Button}" Content="暂停" ToolTip="暂停刷新" />
       </StackPanel>
-      <StackPanel Orientation="Horizontal">
-        <Image x:Name="AppMark" Width="38" Height="38" Margin="0,0,11,0" RenderOptions.BitmapScalingMode="HighQuality"/>
+      <DockPanel>
+        <Image x:Name="AppMark" DockPanel.Dock="Left" Width="38" Height="38" Margin="0,0,11,0" RenderOptions.BitmapScalingMode="HighQuality"/>
         <StackPanel>
           <TextBlock Text="显卡资源监控" FontSize="24" FontWeight="Bold" />
           <TextBlock x:Name="Summary" Text="正在读取服务器状态" Style="{StaticResource Small}" FontSize="13" />
         </StackPanel>
-      </StackPanel>
+      </DockPanel>
     </DockPanel>
 
     <Border x:Name="Recommendation" Grid.Row="1" Background="{StaticResource WatchSurface}" BorderThickness="1" CornerRadius="11" Margin="0,0,0,10" Padding="16,11">
